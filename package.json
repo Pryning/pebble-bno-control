@@ -1,0 +1,97 @@
+{
+  "name": "bno-control",
+  "author": "Tobias Pryning",
+  "version": "1.0.0",
+  "keywords": [
+    "pebble-app"
+  ],
+  "private": true,
+  "dependencies": {},
+  "pebble": {
+    "displayName": "B&O Control",
+    "uuid": "db3b67f3-dae4-4b53-8ae3-9d91ccaf9570",
+    "sdkVersion": "3",
+    "enableMultiJS": true,
+    "targetPlatforms": [
+      "emery"
+    ],
+    "watchapp": {
+      "watchface": false
+    },
+    "resources": {
+      "media": [
+        {
+          "type": "bitmap",
+          "name": "ICON_ELLIPSIS",
+          "file": "images/music_icon_ellipsis.png"
+        },
+        {
+          "type": "bitmap",
+          "name": "ICON_PLAY",
+          "file": "images/music_icon_play.png"
+        },
+        {
+          "type": "bitmap",
+          "name": "ICON_PAUSE",
+          "file": "images/music_icon_pause.png"
+        },
+        {
+          "type": "bitmap",
+          "name": "ICON_SKIP_BACKWARD",
+          "file": "images/music_icon_skip_backward.png"
+        },
+        {
+          "type": "bitmap",
+          "name": "ICON_SKIP_FORWARD",
+          "file": "images/music_icon_skip_forward.png"
+        },
+        {
+          "type": "bitmap",
+          "name": "ICON_VOLUME_UP",
+          "file": "images/music_icon_volume_up.png"
+        },
+        {
+          "type": "bitmap",
+          "name": "ICON_VOLUME_DOWN",
+          "file": "images/music_icon_volume_down.png"
+        },
+        {
+          "type": "bitmap",
+          "name": "ICON_JOIN",
+          "file": "images/icon_join.png"
+        },
+        {
+          "type": "bitmap",
+          "name": "ICON_UNLINK",
+          "file": "images/icon_unlink.png"
+        }
+      ]
+    },
+    "messageKeys": [
+      "CMD",
+      "IDX",
+      "COUNT",
+      "NAME",
+      "TYPE",
+      "ONLINE",
+      "STATE",
+      "SOURCE",
+      "TITLE",
+      "ARTIST",
+      "SCAN",
+      "FOUND",
+      "TOAST",
+      "VOLUME",
+      "VOLMAX",
+      "VALUE",
+      "GROUP",
+      "ROLE"
+    ],
+    "capabilities": [
+      "configurable"
+    ],
+    "usesPermissions": [
+      "LocalNetwork"
+    ]
+  }
+}
