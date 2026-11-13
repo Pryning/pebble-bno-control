@@ -1,7 +1,10 @@
-// B&O Control - phone side.
+// B&O Control - phone side (PebbleKit JS).
+// Copyright (C) 2026 Tobias Pryning
+// SPDX-License-Identifier: GPL-3.0-or-later
+//
 // Talks to Bang & Olufsen devices on the local network:
 //   Mozart platform (Beosound A5, Level, Balance, ...) : http://IP/api/v1/...
-//   ASE / BeoZone platform (Beoplay M3, M5, Stage ...) : http://IP:8080/BeoZone/...
+//   ASE platform (Beoplay M3, M5, Stage ...)            : http://IP:8080/BeoZone/...
 
 var MAX_DEVICES = 16;
 var CMD_LIST = 1, CMD_SCAN = 2, CMD_CLEAR = 3, CMD_TOGGLE = 4, CMD_JOIN = 5, CMD_FOCUS = 6;
@@ -22,7 +25,8 @@ function loadDevices() {
   try {
     var raw = JSON.parse(localStorage.getItem('devices') || '[]');
     devices = raw.map(function (d) {
-      return { ip: d.ip, type: d.type, name: d.name, jid: d.jid || '', online: 0, state: ST_IDLE,
+      return { ip: d.ip, type: d.type, name: d.name, jid: d.jid || '', lastSource: d.lastSource || '',
+               online: 0, state: ST_IDLE,
                source: '', title: '', artist: '' };
     });
   } catch (e) { devices = []; }
@@ -30,19 +34,27 @@ function loadDevices() {
 
 function saveDevices() {
   localStorage.setItem('devices', JSON.stringify(devices.map(function (d) {
-    return { ip: d.ip, type: d.type, name: d.name, jid: d.jid || '' };
+    return { ip: d.ip, type: d.type, name: d.name, jid: d.jid || '', lastSource: d.lastSource || '' };
   })));
 }
 
-function getSubnet() {
-  var s = localStorage.getItem('subnet');
-  if (s) return s;
-  for (var i = 0; i < devices.length; i++) {
-    var m = /^(\d+\.\d+\.\d+)\.\d+$/.exec(devices[i].ip);
-    if (m) return m[1];
-  }
-  return '192.168.1';
+// Subnet saved on the settings page ('' = automatic).
+function manualSubnet() {
+  return (localStorage.getItem('subnet') || '').trim();
 }
+
+// Subnet shown on the settings page.
+function getSubnet() {
+  return manualSubnet() || localStorage.getItem('lastSubnet') || '192.168.1';
+}
+
+// Common home-router subnets, tried when looking for the phone's network.
+var COMMON_SUBNETS = [
+  '192.168.0', '192.168.1', '192.168.2', '192.168.3', '192.168.4', '192.168.5',
+  '192.168.8', '192.168.10', '192.168.11', '192.168.20', '192.168.31', '192.168.50',
+  '192.168.68', '192.168.86', '192.168.88', '192.168.100', '192.168.178', '192.168.188',
+  '10.0.0', '10.0.1', '10.0.2', '10.1.1', '10.10.0', '10.0.10', '172.16.0', '172.16.1'
+];
 
 // ---------------------------------------------------------------------------
 // AppMessage queue (one in flight at a time)
@@ -132,14 +144,16 @@ function http(method, url, body, timeout, cb) {
   var x = new XMLHttpRequest();
   var done = false;
   var timer = setTimeout(function () {
+    // record the timeout first: abort() fires readystatechange synchronously,
+    // which would otherwise look like a quick answer
+    finish(0, '', true);
     try { x.abort(); } catch (e) {}
-    finish(0, '');
   }, timeout);
-  function finish(status, text) {
+  function finish(status, text, timedOut) {
     if (done) return;
     done = true;
     clearTimeout(timer);
-    cb(status, text);
+    cb(status, text, !!timedOut);
   }
   x.onreadystatechange = function () {
     if (x.readyState === 4) finish(x.status, x.responseText);
@@ -255,6 +269,8 @@ function pollMozart(d, cb) {
       online: 1,
       state: state,
       source: (j.source && j.source.name) || '',
+      sourceId: (j.source && j.source.id) || '',
+      sourcePlayable: !(j.source && j.source.isPlayable === false),
       title: md.title || '',
       artist: md.artistName || md.organization || md.genre || '',
       leaderJid: (md.remoteLeader && md.remoteLeader.jid) || d.jid,
@@ -340,6 +356,15 @@ function pollDevice(i) {
       d.online = r.online;
       if (r.online) {
         d.state = r.state; d.source = r.source; d.title = r.title; d.artist = r.artist;
+        if (d.type === TYPE_MOZART) {
+          d.sourceId = r.sourceId;
+          d.sourcePlayable = r.sourcePlayable;
+          // remember the last source the speaker can play by itself
+          if (r.sourceId && r.sourceId !== 'beolink' && r.sourcePlayable && r.sourceId !== d.lastSource) {
+            d.lastSource = r.sourceId;
+            saveDevices();
+          }
+        }
         d.leaderJid = r.leaderJid || d.jid;
         if (d.offUntil && Date.now() < d.offUntil) {
           // just sent to standby: the speaker may still report the old state
@@ -427,8 +452,24 @@ function toggle(i) {
     setTimeout(function () { pollDevice(i); }, 800);
   };
   if (d.type === TYPE_MOZART) {
-    http('POST', 'http://' + d.ip + '/api/v1/playback/command/' + (play ? 'play' : 'pause'),
-         null, 4000, done);
+    var command = function () {
+      http('POST', 'http://' + d.ip + '/api/v1/playback/command/' + (play ? 'play' : 'pause'),
+           null, 4000, done);
+    };
+    // "play" only resumes the current source. After a Beolink session ends
+    // the source is still "beolink" (nothing to resume), so switch back to
+    // the last source the speaker played by itself (or B&O Radio) first.
+    if (play && (d.sourceId === 'beolink' || d.sourcePlayable === false)) {
+      var src = d.lastSource || 'netRadio';
+      http('POST', 'http://' + d.ip + '/api/v1/playback/sources/active/' + src, null, 5000,
+        function (status) {
+          if (status < 200 || status >= 300) { toast('Could not start ' + src + ' (' + status + ')'); }
+          // activating a source usually starts it; send play as well to be sure
+          setTimeout(command, 1000);
+        });
+    } else {
+      command();
+    }
   } else {
     http('POST', 'http://' + d.ip + ':8080/BeoZone/Zone/Stream/' + (play ? 'Play' : 'Pause'),
          '{}', 4000, done);
@@ -558,73 +599,165 @@ function unlink(i) {
 // ---------------------------------------------------------------------------
 // Network discovery: probe every host on the /24 for both APIs.
 // ---------------------------------------------------------------------------
-function probe(ip, cb) {
+// Is there a B&O speaker at `ip`? Both platforms are probed with endpoints
+// that answer fast (~10-50 ms), so short timeouts don't miss anything. ASE's
+// full /BeoDevice info is slow (up to ~1 s), so it's only fetched once a
+// speaker has been found.
+function probe(ip, timeout, cb) {
   var pending = 2, result = null;
   function done() { if (--pending === 0) cb(result); }
-  http('GET', 'http://' + ip + '/api/v1/beolink/self', null, 1500, function (s, t) {
+  http('GET', 'http://' + ip + '/api/v1/beolink/self', null, timeout, function (s, t) {
     var j = s === 200 ? parse(t) : null;
     if (j && j.friendlyName && /bang-olufsen/.test(j.jid || '')) {
       result = { ip: ip, type: TYPE_MOZART, name: j.friendlyName, jid: j.jid };
     }
     done();
   });
-  http('GET', 'http://' + ip + ':8080/BeoDevice', null, 1500, function (s, t) {
+  http('GET', 'http://' + ip + ':8080/BeoDevice/powerManagement/standby', null, timeout, function (s, t) {
     var j = s === 200 ? parse(t) : null;
-    if (j && j.beoDevice && !result) {
-      var bd = j.beoDevice;
-      var name = (bd.productFriendlyName && bd.productFriendlyName.productFriendlyName) ||
-                 (bd.productId && bd.productId.productType) || ip;
-      result = { ip: ip, type: TYPE_ASE, name: name, jid: aseJid(bd) };
-    }
-    done();
+    if (!j || !j.standby || !j.standby.powerState) { done(); return; }
+    http('GET', 'http://' + ip + ':8080/BeoDevice', null, 3000, function (s2, t2) {
+      var k = s2 === 200 ? parse(t2) : null;
+      if (k && k.beoDevice && !result) {
+        var bd = k.beoDevice;
+        var name = (bd.productFriendlyName && bd.productFriendlyName.productFriendlyName) ||
+                   (bd.productId && bd.productId.productType) || ip;
+        result = { ip: ip, type: TYPE_ASE, name: name, jid: aseJid(bd) };
+      }
+      done();
+    });
   });
 }
 
-function scan() {
+// Scan modes (chosen on the watch): how many subnets, and how long to wait.
+var SCAN_MODES = [
+  // FAST: only the most likely subnet, short timeouts
+  { name: 'Fast', detectTimeout: 800, strict: true, maxSubnets: 1, stopWhenFound: true, timeout: 500, concurrency: 64 },
+  // NORMAL: subnets whose router answers over HTTP, one at a time, most
+  // likely first; stops at the first subnet with speakers
+  { name: 'Normal', detectTimeout: 1000, strict: true, maxSubnets: 6, stopWhenFound: true, timeout: 800, concurrency: 64 },
+  // THOROUGH: every detected subnet (also ones that only answered with an
+  // error), long timeouts, doesn't stop early
+  { name: 'Thorough', detectTimeout: 1500, strict: false, maxSubnets: 10, stopWhenFound: false, timeout: 2000, concurrency: 48 }
+];
+
+// PebbleKit JS can't read the phone's IP address, so find the network by
+// probing the usual router addresses. Addresses on other networks time out.
+// strict: count a subnet only if a router there answered over HTTP (a quick
+// connection error can also come from a router rejecting a foreign address).
+function detectSubnets(mode, cb) {
+  var candidates = [];
+  function add(sn) { if (sn && candidates.indexOf(sn) < 0) candidates.push(sn); }
+  add(localStorage.getItem('lastSubnet'));
+  devices.forEach(function (d) {
+    var m = /^(\d+\.\d+\.\d+)\.\d+$/.exec(d.ip);
+    if (m) add(m[1]);
+  });
+  COMMON_SUBNETS.forEach(add);
+
+  var answered = {}, refused = {}, pending = candidates.length * 2;
+  candidates.forEach(function (sn) {
+    ['1', '254'].forEach(function (host) {
+      http('GET', 'http://' + sn + '.' + host + '/', null, mode.detectTimeout, function (status, text, timedOut) {
+        if (status > 0) answered[sn] = true;
+        else if (!timedOut) refused[sn] = true;
+        if (--pending === 0) {
+          // keep candidate order (known networks first)
+          var alive = candidates.filter(function (c) {
+            return answered[c] || (!mode.strict && refused[c]);
+          });
+          // nothing answered over HTTP: fall back to subnets that refused
+          if (!alive.length) alive = candidates.filter(function (c) { return refused[c]; });
+          cb(alive);
+        }
+      });
+    });
+  });
+}
+
+function scan(modeIdx) {
   if (scanning) return;
   scanning = true;
-  var subnet = getSubnet();
-  var next = 1, finished = 0, total = 254, found = [], lastPct = -1;
-  var CONCURRENCY = 24;
-  console.log('Scanning ' + subnet + '.0/24');
+  var mode = SCAN_MODES[modeIdx] || SCAN_MODES[1];
+  var started = Date.now();
   enqueue({ SCAN: 0, FOUND: 0 }, 'scan');
+  var manual = manualSubnet();
+  detectSubnets(mode, function (subnets) {
+    if (manual) subnets = [manual].concat(subnets.filter(function (s) { return s !== manual; }));
+    if (!subnets.length) subnets = [getSubnet()];
+    subnets = subnets.slice(0, mode.maxSubnets);
+    console.log(mode.name + ' scan of ' + subnets.map(function (s) { return s + '.0/24'; }).join(', ') +
+                ' (detected in ' + (Date.now() - started) + ' ms)');
+    scanSubnets(subnets, mode, started);
+  });
+}
 
-  function worker() {
-    if (next > total) return;
-    var ip = subnet + '.' + (next++);
-    probe(ip, function (r) {
-      if (r) { found.push(r); console.log('Found ' + r.name + ' @ ' + r.ip); }
-      finished++;
-      var pct = Math.floor(finished * 100 / total);
-      if (pct >= lastPct + 5 || finished === total) {
-        lastPct = pct;
-        enqueue({ SCAN: Math.min(pct, 100), FOUND: found.length }, 'scan');
-      }
-      if (finished === total) complete();
-      else worker();
-    });
+function scanSubnets(subnets, mode, started) {
+  var total = subnets.length * 254, finished = 0, found = [], lastPct = -1;
+  var scanned = [];
+
+  function progress() {
+    var pct = Math.floor(finished * 100 / total);
+    if (pct >= lastPct + 5) {
+      lastPct = pct;
+      enqueue({ SCAN: Math.min(pct, 100), FOUND: found.length }, 'scan');
+    }
+  }
+
+  // Scan the subnets one at a time (most likely first).
+  function nextSubnet(k) {
+    if (k >= subnets.length || (mode.stopWhenFound && found.length)) { complete(); return; }
+    var sn = subnets[k];
+    scanned.push(sn);
+    var host = 1, done = 0;
+    function worker() {
+      if (host > 254) return;
+      var ip = sn + '.' + (host++);
+      probe(ip, mode.timeout, function (r) {
+        if (r) { found.push(r); console.log('Found ' + r.name + ' @ ' + r.ip); }
+        finished++;
+        progress();
+        if (++done === 254) nextSubnet(k + 1);
+        else worker();
+      });
+    }
+    for (var i = 0; i < mode.concurrency; i++) worker();
   }
 
   function complete() {
-    // merge with known devices (by IP)
+    // merge with known devices: same speaker (Beolink JID) or same IP
     found.forEach(function (f) {
       var existing = null;
-      devices.forEach(function (d) { if (d.ip === f.ip) existing = d; });
-      if (existing) { existing.name = f.name; existing.type = f.type; existing.jid = f.jid; }
-      else devices.push({ ip: f.ip, type: f.type, name: f.name, jid: f.jid, online: 1, state: ST_IDLE,
-                          source: '', title: '', artist: '' });
+      devices.forEach(function (d) {
+        if ((f.jid && d.jid === f.jid) || (!existing && d.ip === f.ip && (!d.jid || !f.jid))) existing = d;
+      });
+      if (existing) {
+        existing.ip = f.ip; existing.name = f.name; existing.type = f.type; existing.jid = f.jid;
+      } else {
+        devices.push({ ip: f.ip, type: f.type, name: f.name, jid: f.jid, online: 1, state: ST_IDLE,
+                       source: '', title: '', artist: '' });
+      }
     });
     devices.sort(function (a, b) { return a.name.localeCompare(b.name); });
     if (devices.length > MAX_DEVICES) devices.length = MAX_DEVICES;
+    // remember the network the speakers were found on (tried first next time)
+    var hit = null;
+    subnets.forEach(function (sn) {
+      if (!hit && found.some(function (f) { return f.ip.indexOf(sn + '.') === 0; })) hit = sn;
+    });
+    if (hit) localStorage.setItem('lastSubnet', hit);
     saveDevices();
     scanning = false;
+    var secs = Math.round((Date.now() - started) / 1000);
+    console.log(mode.name + ' scan done in ' + secs + ' s, found ' + found.length);
     enqueue({ SCAN: 101, FOUND: found.length }, 'scan');
+    toast(secs + 's: ' + scanned.map(function (s) { return s + '.x'; }).join(', '));
     sendAll();
     lastFullPoll = 0;
     pollLoop();
   }
 
-  for (var i = 0; i < CONCURRENCY; i++) worker();
+  nextSubnet(0);
 }
 
 function clearDevices() {
@@ -648,7 +781,7 @@ Pebble.addEventListener('appmessage', function (e) {
   var p = e.payload || {};
   var cmd = p.CMD, idx = p.IDX;
   if (cmd === CMD_LIST) sendAll();
-  else if (cmd === CMD_SCAN) scan();
+  else if (cmd === CMD_SCAN) scan(typeof p.VALUE === 'number' ? p.VALUE : 1);
   else if (cmd === CMD_CLEAR) clearDevices();
   else if (cmd === CMD_TOGGLE) toggle(idx);
   else if (cmd === CMD_JOIN) join(idx);
@@ -666,13 +799,14 @@ Pebble.addEventListener('appmessage', function (e) {
 
 // Phone-side settings page: lets you change the subnet that gets scanned.
 Pebble.addEventListener('showConfiguration', function () {
-  var subnet = getSubnet();
+  var subnet = manualSubnet();
   var html = '<!DOCTYPE html><html><head><meta name="viewport" content="width=device-width,initial-scale=1">' +
     '<title>B&amp;O Control</title><style>body{font-family:sans-serif;background:#111;color:#eee;padding:20px}' +
     'input{font-size:18px;padding:8px;width:100%;box-sizing:border-box;margin:8px 0 16px}' +
     'button{font-size:18px;padding:10px 20px;background:#fff;color:#000;border:0;border-radius:4px}</style></head>' +
-    '<body><h2>B&amp;O Control</h2><label>Network to scan (first three parts of the IP)</label>' +
-    '<input id="s" value="' + subnet + '" placeholder="192.168.1">' +
+    '<body><h2>B&amp;O Control</h2><label>Network to scan (first three parts of the IP). ' +
+    'Leave empty to find it automatically.</label>' +
+    '<input id="s" value="' + subnet + '" placeholder="automatic, e.g. 192.168.0">' +
     '<button onclick="location.href=\'pebblejs://close#\'+encodeURIComponent(JSON.stringify({subnet:document.getElementById(\'s\').value}))">Save</button>' +
     '</body></html>';
   Pebble.openURL('data:text/html,' + encodeURIComponent(html));
@@ -681,8 +815,15 @@ Pebble.addEventListener('showConfiguration', function () {
 Pebble.addEventListener('webviewclosed', function (e) {
   if (!e || !e.response) return;
   var cfg = parse(decodeURIComponent(e.response));
-  if (cfg && /^\d+\.\d+\.\d+$/.test((cfg.subnet || '').trim())) {
-    localStorage.setItem('subnet', cfg.subnet.trim());
-    toast('Subnet ' + cfg.subnet.trim());
+  if (!cfg) return;
+  var sn = (cfg.subnet || '').trim();
+  if (!sn) {
+    localStorage.removeItem('subnet');
+    toast('Network: automatic');
+  } else if (/^\d+\.\d+\.\d+$/.test(sn)) {
+    localStorage.setItem('subnet', sn);
+    toast('Network ' + sn + '.x');
+  } else {
+    toast('Invalid network: ' + sn);
   }
 });

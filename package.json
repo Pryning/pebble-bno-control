@@ -1,7 +1,13 @@
 {
-  "name": "bno-control",
+  "name": "pebble-bno-control",
+  "description": "Pebble watchapp to control Bang & Olufsen (Mozart and ASE) speakers on your local network",
   "author": "Tobias Pryning",
   "version": "1.0.0",
+  "license": "GPL-3.0-or-later",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Pryning/pebble-bno-control.git"
+  },
   "keywords": [
     "pebble-app"
   ],
@@ -20,6 +26,12 @@
     },
     "resources": {
       "media": [
+        {
+          "type": "bitmap",
+          "name": "APP_ICON",
+          "file": "images/app_icon.png",
+          "menuIcon": true
+        },
         {
           "type": "bitmap",
           "name": "ICON_ELLIPSIS",
@@ -64,6 +76,16 @@
           "type": "bitmap",
           "name": "ICON_UNLINK",
           "file": "images/icon_unlink.png"
+        },
+        {
+          "type": "bitmap",
+          "name": "ICON_ARROW_UP",
+          "file": "images/icon_arrow_up.png"
+        },
+        {
+          "type": "bitmap",
+          "name": "ICON_ARROW_DOWN",
+          "file": "images/icon_arrow_down.png"
         }
       ]
     },
@@ -91,7 +113,11 @@
       "configurable"
     ],
     "usesPermissions": [
-      "LocalNetwork"
+      {
+        "name": "LocalNetwork",
+        "reason": "To find and control your B&O speakers on your home network",
+        "required": true
+      }
     ]
   }
 }
