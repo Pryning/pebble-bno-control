@@ -9,6 +9,8 @@ It supports both B&O platforms:
 
 Target platform: **emery** (Pebble Time 2).
 
+**[Get it on the Pebble App Store](https://apps.rePebble.com/046f4445bbfa46c893c2a8c0)**
+
 > Unofficial project. Not affiliated with or endorsed by Bang & Olufsen.
 
 🤖 This app is 100% vibe coded with [Claude Code](https://claude.com/claude-code).
@@ -51,7 +53,7 @@ The watch app (`src/c/main.c`) talks to PebbleKit JS on the phone (`src/pkjs/ind
 
 ## Build & install
 
-Requires the [Pebble SDK](https://developer.repebble.com) (`pebble` tool).
+To just use the app, install it from the [Pebble App Store](https://apps.rePebble.com/046f4445bbfa46c893c2a8c0). To build it yourself, you need the [Pebble SDK](https://developer.repebble.com) (`pebble` tool).
 
 ```sh
 pebble build
