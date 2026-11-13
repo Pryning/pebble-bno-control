@@ -11,6 +11,8 @@ Target platform: **emery** (Pebble Time 2).
 
 > Unofficial project. Not affiliated with or endorsed by Bang & Olufsen.
 
+🤖 This app is 100% vibe coded with [Claude Code](https://claude.com/claude-code).
+
 ## Features
 
 - **Home page:** the controls for whatever is playing. If speakers play together in a Beolink group, it shows the group's leader. If several play separately, it shows the first one in the list. When nothing is playing, it says so. The app returns here after 20 s without a button press.
