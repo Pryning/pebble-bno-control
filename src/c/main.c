@@ -821,8 +821,25 @@ static void page_reset(Page *pg, int cur) {
 
 // Re-pick the home device. Stays on the current one while it's still active
 // (so pausing from home doesn't jump away) unless `fresh`.
+// Leader of the multiroom group `d` follows, if it's known and active; else -1.
+static int group_leader_of(const Device *d) {
+  if (!d || !d->group || d->role != ROLE_FOLLOWER) return -1;
+  for (int j = 0; j < s_count; j++) {
+    const Device *o = &s_devices[j];
+    if (o->group == d->group && o->role == ROLE_LEADER && is_active(o)) return j;
+  }
+  return -1;
+}
+
 static void home_pick(bool fresh) {
   Device *d = page_device(&s_home);
+  // showing a follower whose group leader is known: show the leader instead
+  // (unless the user picked this speaker on purpose)
+  int leader = group_leader_of(d);
+  if (leader >= 0 && s_home.cur != s_home_choice && s_home.off_count == 0) {
+    page_reset(&s_home, leader);
+    return;
+  }
   if (!fresh && (s_home.off_count > 0 || (d && is_active(d)))) return;
   int idx = -1;
   if (s_home_choice >= 0 && s_home_choice < s_count && is_active(&s_devices[s_home_choice])) {
